@@ -15,6 +15,9 @@ use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
+use crate::iterators::merge_iterator::MergeIterator;
+use crate::iterators::StorageIterator;
+use crate::key;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::MemTable;
@@ -121,6 +124,12 @@ pub enum CompactionFilter {
 /// The storage interface of the LSM tree.
 pub(crate) struct LsmStorageInner {
     pub(crate) state: Arc<RwLock<Arc<LsmStorageState>>>,
+    /// Why we need state lock? Because we check a condition before modifying `state`.
+    /// It is possible that multiple threads found the condition met, so we double-check (in single thread)
+    /// before actually write the state.
+    ///
+    /// Can we use `state.write()` instead? No, it does not work for SST flush and compaction.
+    /// These two operations will take write lock on state for a long time if there is no state_lock.
     pub(crate) state_lock: Mutex<()>,
     path: PathBuf,
     pub(crate) block_cache: Arc<BlockCache>,
@@ -278,8 +287,22 @@ impl LsmStorageInner {
     }
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
-    pub fn get(&self, _key: &[u8]) -> Result<Option<Bytes>> {
-        unimplemented!()
+    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        let snapshot = { self.state.read().clone() };
+
+        let value = snapshot.memtable.get(key);
+        match value {
+            Some(v) => Ok((!v.is_empty()).then_some(v)),
+            None => {
+                for memtable in &snapshot.imm_memtables {
+                    let v = memtable.get(key);
+                    if let Some(v) = v {
+                        return Ok((!v.is_empty()).then_some(v));
+                    }
+                }
+                Ok(None)
+            }
+        }
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
@@ -288,13 +311,23 @@ impl LsmStorageInner {
     }
 
     /// Put a key-value pair into the storage by writing into the current memtable.
-    pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
-        unimplemented!()
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let guard = self.state.read();
+        guard.memtable.put(key, value)?;
+        if guard.memtable.approximate_size() >= self.options.target_sst_size {
+            let state_lock = self.state_lock.lock();
+            // check again
+            if guard.memtable.approximate_size() >= self.options.target_sst_size {
+                drop(guard);
+                self.force_freeze_memtable(&state_lock)?;
+            }
+        }
+        Ok(())
     }
 
     /// Remove a key from the storage by writing an empty value.
-    pub fn delete(&self, _key: &[u8]) -> Result<()> {
-        unimplemented!()
+    pub fn delete(&self, key: &[u8]) -> Result<()> {
+        self.put(key, &[])
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
@@ -319,7 +352,19 @@ impl LsmStorageInner {
 
     /// Force freeze the current memtable to an immutable memtable
     pub fn force_freeze_memtable(&self, _state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-        unimplemented!()
+        let memtable = Arc::new(MemTable::create(self.next_sst_id()));
+        {
+            let mut guard = self.state.write();
+            // Swap the current memtable with a new one.
+            let mut snapshot = guard.as_ref().clone();
+            let old_memtable = std::mem::replace(&mut snapshot.memtable, memtable);
+            // Add the memtable to the immutable memtables.
+            snapshot.imm_memtables.insert(0, old_memtable.clone());
+            // Update the snapshot.
+            *guard = Arc::new(snapshot);
+        }
+
+        Ok(())
     }
 
     /// Force flush the earliest-created immutable memtable to disk
@@ -335,9 +380,65 @@ impl LsmStorageInner {
     /// Create an iterator over a range of keys.
     pub fn scan(
         &self,
-        _lower: Bound<&[u8]>,
-        _upper: Bound<&[u8]>,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
     ) -> Result<FusedIterator<LsmIterator>> {
-        unimplemented!()
+        let iters = {
+            let mut iters = vec![];
+            let state = self.state.read();
+            iters.push(Box::new(state.memtable.scan(lower, upper)));
+            iters.extend(
+                state
+                    .imm_memtables
+                    .iter()
+                    .map(|memtable| Box::new(memtable.scan(lower, upper))),
+            );
+            iters
+        };
+        // for (i, mut it) in iters.iter().enumerate() {
+        //     println!(
+        //         "LsmStorage::scan iter {i}, key: {:?}, value: {:?}",
+        //         it.key(),
+        //         it.value()
+        //     );
+        //     // print_lsm_iter_result(&mut *it);
+        // }
+
+        let merge_iter = MergeIterator::create(iters);
+        Ok(FusedIterator::new(LsmIterator::new(merge_iter)?))
     }
+}
+
+pub fn print_lsm_iter_result_1<I>(iter: &mut I)
+where
+    I: for<'a> StorageIterator<KeyType<'a> = key::Key<&'a [u8]>>,
+{
+    let mut s = String::new();
+    while iter.is_valid() {
+        s += &format!(
+            "{{key: {:?}, value: {:?}}}, ",
+            bytes::Bytes::copy_from_slice(iter.key().for_testing_key_ref()),
+            bytes::Bytes::copy_from_slice(iter.value())
+        );
+        iter.next().unwrap();
+        println!("[print_lsm_iter_result] next");
+    }
+    println!("[print_lsm_iter_result] {s}");
+}
+
+pub fn print_lsm_iter_result_2<I>(iter: &mut I)
+where
+    I: for<'a> StorageIterator<KeyType<'a> = &'a [u8]>,
+{
+    let mut s = String::new();
+    while iter.is_valid() {
+        s += &format!(
+            "{{key: {:?}, value: {:?}}}, ",
+            bytes::Bytes::copy_from_slice(iter.key()),
+            bytes::Bytes::copy_from_slice(iter.value())
+        );
+        iter.next().unwrap();
+        println!("[print_lsm_iter_result] next");
+    }
+    println!("[print_lsm_iter_result] {s}");
 }

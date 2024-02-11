@@ -13,7 +13,8 @@ pub trait StorageIterator {
     /// Get the current key.
     fn key(&self) -> Self::KeyType<'_>;
 
-    /// Check if the current iterator is valid.
+    /// Check if the current iterator is valid. It means current item is present.
+    /// Should check before calling `key()` and `value()`.
     fn is_valid(&self) -> bool;
 
     /// Move to the next position.
