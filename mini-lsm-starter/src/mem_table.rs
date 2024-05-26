@@ -85,7 +85,8 @@ impl MemTable {
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         self.map
             .insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
-        // XXX: What should the ordering be like?
+        // TODO: What should the ordering be like?
+        // When insert a key twice, the size will be inaccurate, so it's "approximate_size"
         self.approximate_size
             .fetch_add(key.len() + value.len(), Ordering::Relaxed);
         Ok(())
@@ -100,15 +101,7 @@ impl MemTable {
 
     /// Get an iterator over a range of keys.
     pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> MemTableIterator {
-        let (lower, upper) = (map_bound(lower), map_bound(upper));
-
-        let mut iter = MemTableIterator::new(
-            self.map.clone(),
-            |map| map.range((lower, upper)),
-            (Default::default(), Default::default()),
-        );
-        iter.next().unwrap();
-        iter
+        MemTableIterator::create(self.map.clone(), lower, upper)
     }
 
     /// Flush the mem-table to SSTable. Implement in week 1 day 6.
@@ -134,27 +127,61 @@ impl MemTable {
 type SkipMapRangeIter<'a> =
     crossbeam_skiplist::map::Range<'a, Bytes, (Bound<Bytes>, Bound<Bytes>), Bytes, Bytes>;
 
-/// An iterator over a range of `SkipMap`. This is a self-referential structure and please refer to week 1, day 2
-/// chapter for more information.
+/// An iterator over a range of `SkipMap`. (~ A `Peekable` iterator)
 ///
-/// This is part of week 1, day 2.
+/// We want to avoid using lifetime on the struct, to avoid overly complicated API and hard to compile.
+///
+/// To hide the lifetime of the `SkipMapRangeIter`,
+/// we need to ensure that whenever the iterator is being used, the underlying skiplist object is not freed.
+/// So we put `Arc<SkipMap>` in the struct.
+///
+/// But then `iter` needs to refer to the lifetime of `self`: self-referential struct.
 #[self_referencing]
 pub struct MemTableIterator {
     /// Stores a reference to the skipmap.
     map: Arc<SkipMap<Bytes, Bytes>>,
     /// Stores a skipmap iterator that refers to the lifetime of `MemTableIterator` itself.
+    /// It actually points to the next item.
     #[borrows(map)]
     #[not_covariant]
     iter: SkipMapRangeIter<'this>,
-    /// Stores the current key-value pair.
+    /// Stores the current key-value pair (peeked item).
+    /// An empty key means the iterator is invalid.
     item: (Bytes, Bytes),
 }
 
 impl MemTableIterator {
+    pub fn create(
+        map: Arc<SkipMap<Bytes, Bytes>>,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+    ) -> Self {
+        let (lower, upper) = (map_bound(lower), map_bound(upper));
+        let mut iter = Self::new(
+            map,
+            |map| map.range((lower, upper)),
+            // We just fill placeholder values here, the actual values will be filled in `next_inner`.
+            (Bytes::new(), Bytes::new()),
+        );
+        // peek the first item
+        iter.next_inner().unwrap();
+        iter
+    }
+
     fn entry_to_item(entry: Option<Entry<'_, Bytes, Bytes>>) -> (Bytes, Bytes) {
         entry
             .map(|x| (x.key().clone(), x.value().clone()))
-            .unwrap_or_else(|| (Bytes::from_static(&[]), Bytes::from_static(&[])))
+            // The iter becomes invalid now
+            .unwrap_or_else(|| (Bytes::new(), Bytes::new()))
+    }
+
+    fn next_inner(&mut self) -> Result<()> {
+        self.with_mut(|s| {
+            let entry = s.iter.next();
+            let item = Self::entry_to_item(entry);
+            *s.item = item;
+        });
+        Ok(())
     }
 }
 
@@ -162,10 +189,12 @@ impl StorageIterator for MemTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
     fn value(&self) -> &[u8] {
+        debug_assert!(self.is_valid());
         self.borrow_item().1.as_ref()
     }
 
     fn key(&self) -> KeySlice {
+        debug_assert!(self.is_valid());
         KeySlice::from_slice(self.borrow_item().0.as_ref())
     }
 
@@ -174,11 +203,8 @@ impl StorageIterator for MemTableIterator {
     }
 
     fn next(&mut self) -> Result<()> {
-        self.with_mut(|s| {
-            let entry = s.iter.next();
-            let item = Self::entry_to_item(entry);
-            *s.item = item;
-        });
+        debug_assert!(self.is_valid());
+        self.next_inner()?;
         Ok(())
     }
 }

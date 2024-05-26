@@ -70,11 +70,11 @@ impl LsmStorageState {
 
 #[derive(Debug, Clone)]
 pub struct LsmStorageOptions {
-    // Block size in bytes
+    /// Block size in bytes
     pub block_size: usize,
-    // SST size in bytes, also the approximate memtable capacity limit
+    /// SST size in bytes, also the approximate memtable capacity limit
     pub target_sst_size: usize,
-    // Maximum number of memtables in memory, flush to L0 when exceeding this limit
+    /// Maximum number of memtables in memory, flush to L0 when exceeding this limit
     pub num_memtable_limit: usize,
     pub compaction_options: CompactionOptions,
     pub enable_wal: bool,
@@ -124,12 +124,12 @@ pub enum CompactionFilter {
 /// The storage interface of the LSM tree.
 pub(crate) struct LsmStorageInner {
     pub(crate) state: Arc<RwLock<Arc<LsmStorageState>>>,
-    /// Why we need state lock? Because we check a condition before modifying `state`.
-    /// It is possible that multiple threads found the condition met, so we double-check (in single thread)
-    /// before actually write the state.
+    /// We check `state_lock` before modifying `state` (i.e., acquiring `state.write()`, modification = moving memtables around)
+    /// to make the duration of locking `state` as short as possible.
     ///
-    /// Can we use `state.write()` instead? No, it does not work for SST flush and compaction.
-    /// These two operations will take write lock on state for a long time if there is no state_lock.
+    /// Can we just use `state.write()`?
+    /// skyzh:  No, it does not work for SST flush and compaction.
+    /// These two operations will take write lock on state for a long time if there is no separated state_lock.
     pub(crate) state_lock: Mutex<()>,
     path: PathBuf,
     pub(crate) block_cache: Arc<BlockCache>,
@@ -316,8 +316,10 @@ impl LsmStorageInner {
         guard.memtable.put(key, value)?;
         if guard.memtable.approximate_size() >= self.options.target_sst_size {
             let state_lock = self.state_lock.lock();
-            // check again
+            // check again, because another thread might have acquired the lock before, and already freezed the memtable
             if guard.memtable.approximate_size() >= self.options.target_sst_size {
+                // Why not upgrad the lock to write lock?
+                // There's some work between the read and write lock. We release lock here so that other threads are unblocked.
                 drop(guard);
                 self.force_freeze_memtable(&state_lock)?;
             }
@@ -326,6 +328,8 @@ impl LsmStorageInner {
     }
 
     /// Remove a key from the storage by writing an empty value.
+    ///
+    /// Deleting a non-existing key is also considered as a successful operation.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
         self.put(key, &[])
     }
@@ -352,7 +356,8 @@ impl LsmStorageInner {
 
     /// Force freeze the current memtable to an immutable memtable
     pub fn force_freeze_memtable(&self, _state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-        let memtable = Arc::new(MemTable::create(self.next_sst_id()));
+        // put I/O operations outside of the lock region.
+        let memtable = Arc::new(MemTable::create(self.next_sst_id())); // <- could take several milliseconds, so do it before locking
         {
             let mut guard = self.state.write();
             // Swap the current memtable with a new one.
@@ -395,50 +400,8 @@ impl LsmStorageInner {
             );
             iters
         };
-        // for (i, mut it) in iters.iter().enumerate() {
-        //     println!(
-        //         "LsmStorage::scan iter {i}, key: {:?}, value: {:?}",
-        //         it.key(),
-        //         it.value()
-        //     );
-        //     // print_lsm_iter_result(&mut *it);
-        // }
 
         let merge_iter = MergeIterator::create(iters);
         Ok(FusedIterator::new(LsmIterator::new(merge_iter)?))
     }
-}
-
-pub fn print_lsm_iter_result_1<I>(iter: &mut I)
-where
-    I: for<'a> StorageIterator<KeyType<'a> = key::Key<&'a [u8]>>,
-{
-    let mut s = String::new();
-    while iter.is_valid() {
-        s += &format!(
-            "{{key: {:?}, value: {:?}}}, ",
-            bytes::Bytes::copy_from_slice(iter.key().for_testing_key_ref()),
-            bytes::Bytes::copy_from_slice(iter.value())
-        );
-        iter.next().unwrap();
-        println!("[print_lsm_iter_result] next");
-    }
-    println!("[print_lsm_iter_result] {s}");
-}
-
-pub fn print_lsm_iter_result_2<I>(iter: &mut I)
-where
-    I: for<'a> StorageIterator<KeyType<'a> = &'a [u8]>,
-{
-    let mut s = String::new();
-    while iter.is_valid() {
-        s += &format!(
-            "{{key: {:?}, value: {:?}}}, ",
-            bytes::Bytes::copy_from_slice(iter.key()),
-            bytes::Bytes::copy_from_slice(iter.value())
-        );
-        iter.next().unwrap();
-        println!("[print_lsm_iter_result] next");
-    }
-    println!("[print_lsm_iter_result] {s}");
 }

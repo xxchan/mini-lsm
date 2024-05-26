@@ -4,6 +4,11 @@ use bytes::Bytes;
 
 pub const TS_ENABLED: bool = false;
 
+/// Key abstraction allows different bytes structs to be used as keys.
+/// Different from values, which is always `&[u8]`,
+/// we want to use different types for keys to access data in different ways.
+///
+/// Later, we will also add timestamp to the key.
 pub struct Key<T: AsRef<[u8]>>(T);
 
 pub type KeySlice<'a> = Key<&'a [u8]>;

@@ -4,8 +4,6 @@
 use std::cmp::{self};
 use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
-use std::fmt::{Debug, Formatter};
-use std::ops::DerefMut;
 
 use anyhow::Result;
 
@@ -13,6 +11,7 @@ use crate::key::KeySlice;
 
 use super::StorageIterator;
 
+/// `(index, iterator)`. We use `index` to ensure an iterator with smaller index contains the latest data.
 struct HeapWrapper<I: StorageIterator>(pub usize, pub Box<I>);
 
 impl<I: StorageIterator> PartialEq for HeapWrapper<I> {
@@ -31,6 +30,7 @@ impl<I: StorageIterator> PartialOrd for HeapWrapper<I> {
             cmp::Ordering::Less => Some(cmp::Ordering::Less),
             cmp::Ordering::Equal => self.0.partial_cmp(&other.0),
         }
+        // reverse the order to make it a min heap
         .map(|x| x.reverse())
     }
 }
@@ -44,9 +44,10 @@ impl<I: StorageIterator> Ord for HeapWrapper<I> {
 /// Merge multiple iterators of the same type. If the same key occurs multiple times in some
 /// iterators, prefer the one with smaller index.
 pub struct MergeIterator<I: StorageIterator> {
-    /// A min heap.
+    /// A min heap. (`BinaryHeap` is a max heap. We implement `PartialOrd` to reverse the order.)
     /// Invariant: all iters are valid.
     iters: BinaryHeap<HeapWrapper<I>>,
+    /// `None` if the iterator is invalid.
     current: Option<HeapWrapper<I>>,
 }
 
@@ -58,6 +59,7 @@ impl<I: StorageIterator> MergeIterator<I> {
             .filter(|(_i, it)| it.is_valid())
             .map(|(i, it)| HeapWrapper(i, it))
             .collect();
+        debug_assert!(iters.iter().all(|it| it.1.is_valid()));
         let current = iters.pop();
         Self { iters, current }
     }
@@ -69,11 +71,15 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice {
+        debug_assert!(self.is_valid());
         let current = self.current.as_ref().unwrap();
-        current.1.key()
+        let key = current.1.key();
+        debug_assert!(!key.is_empty());
+        key
     }
 
     fn value(&self) -> &[u8] {
+        debug_assert!(self.is_valid());
         let current = self.current.as_ref().unwrap();
         current.1.value()
     }
@@ -83,15 +89,18 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     }
 
     fn next(&mut self) -> Result<()> {
+        debug_assert!(self.is_valid());
         let current = self.current.as_mut().unwrap();
 
         // skip all keys equal to current key
         while let Some(mut head) = self.iters.peek_mut() {
+            debug_assert!(head.1.key() >= current.1.key());
             if head.1.key() == current.1.key() {
+                // try advance head
                 if let e @ Err(_) = head.1.next() {
-                    // Now `head` is in bad state.
-                    // If we don't pop here. Drop PeekMut will access its `key()`, which
-                    // is kind of undefined behavior.
+                    // Error handling: Now `head` is in bad state.
+                    // If we don't pop here, droping PeekMut will call `partical_cmp()` which accesses its `key()`.
+                    // That is undefined behavior.
                     PeekMut::pop(head);
                     return e;
                 }
