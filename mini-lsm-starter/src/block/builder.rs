@@ -8,7 +8,7 @@ use crate::{
 use super::Block;
 
 /// Builds a block.
-/// 
+///
 /// Note: currently block doesn't check any LSM logic. e.g., duplicate key, the order of keys, etc.
 pub struct BlockBuilder {
     /// Offsets of each key-value entries.
@@ -41,7 +41,7 @@ impl BlockBuilder {
     }
 
     /// Adds a key-value pair to the block. Returns false when the block is full.
-    /// 
+    ///
     /// If the block is empty, adding a value larger than the target size is ok.
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
@@ -81,7 +81,7 @@ impl BlockBuilder {
     }
 
     /// Check if there is no key-value pair in the block.
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.first_key.is_empty()
     }
 

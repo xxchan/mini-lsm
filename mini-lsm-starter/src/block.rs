@@ -35,7 +35,7 @@ pub struct Block {
     /// What are the pros/cons?
     ///
     /// I think `Arc<Block>` is enough. No need to introduce smart pointer here.
-    /// 
+    ///
     /// Q: Can a block contain duplicated keys?
     pub(crate) data: Vec<u8>,
     pub(crate) offsets: Vec<u16>,
@@ -64,9 +64,9 @@ impl Block {
 
     /// Decode from the data layout, transform the input `data` to a single `Block`
     ///
-    /// Is your implementation prune to a maliciously-built block? 
+    /// Is your implementation prune to a maliciously-built block?
     /// Will there be invalid memory access, or OOMs, if a user deliberately construct an invalid block?
-    /// 
+    ///
     /// Currently it will panic, but not invalid access.
     pub fn decode(data: &[u8]) -> Self {
         let offset_end = data.len() - SIZE_OF_U16;

@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::{
     block::{Block, BlockBuilder, BlockIterator},
-    key::{KeySlice, KeyVec}, tests::harness::init_logging,
+    key::{KeySlice, KeyVec},
 };
 
 #[test]
@@ -167,4 +167,3 @@ fn test_block_seek_nonexistent() {
 fn test_malicious_block() {
     Block::decode(&[]);
 }
-
