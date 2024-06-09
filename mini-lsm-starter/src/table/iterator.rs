@@ -36,7 +36,7 @@ impl SsTableIterator {
     }
 
     fn seek_to_first_inner(table: Arc<SsTable>) -> Result<(BlockIterator, usize)> {
-        let block = table.read_block(0)?;
+        let block = table.read_block_cached(0)?;
         let iter = BlockIterator::create_and_seek_to_first(block);
         Ok((iter, 0))
     }
@@ -79,18 +79,18 @@ impl SsTableIterator {
             // not found
             // TODO: optimize this invalid iter
             let iter = BlockIterator::create_and_seek_to_key(
-                table.read_block(table.block_meta.len() - 1)?,
+                table.read_block_cached(table.block_meta.len() - 1)?,
                 key,
             );
             Ok((iter, table.block_meta.len() - 1))
         } else if lo > 0 && key <= table.block_meta[lo - 1].last_key.as_key_slice() {
             // in prev block
-            let block = table.read_block(lo - 1)?;
+            let block = table.read_block_cached(lo - 1)?;
             let iter = BlockIterator::create_and_seek_to_key(block, key);
             return Ok((iter, lo - 1));
         } else {
             // in current block
-            let block = table.read_block(lo)?;
+            let block = table.read_block_cached(lo)?;
             let iter = BlockIterator::create_and_seek_to_first(block);
             return Ok((iter, lo));
         }
@@ -128,7 +128,7 @@ impl StorageIterator for SsTableIterator {
                 return Ok(());
             }
             self.blk_idx += 1;
-            let block = self.table.read_block(self.blk_idx)?;
+            let block = self.table.read_block_cached(self.blk_idx)?;
             self.blk_iter = BlockIterator::create_and_seek_to_first(block);
         }
         Ok(())

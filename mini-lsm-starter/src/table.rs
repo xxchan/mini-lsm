@@ -196,7 +196,7 @@ impl SsTable {
     }
 
     /// Read a block from the disk.
-    pub fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
+    fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
         debug_assert!(block_idx < self.block_meta.len());
         let start_offset = self.block_meta[block_idx].offset as u64;
         let stop_offset = if block_idx == self.block_meta.len() - 1 {
@@ -210,9 +210,16 @@ impl SsTable {
         Ok(Arc::new(block))
     }
 
-    /// Read a block from disk, with block cache. (Day 4)
-    pub fn read_block_cached(&self, _block_idx: usize) -> Result<Arc<Block>> {
-        unimplemented!()
+    /// Read a block from disk, with block cache.
+    pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
+        if let Some(cache) = &self.block_cache {
+            cache
+                .try_get_with((self.id, block_idx), || self.read_block(block_idx))
+                .map_err(|e| // The Arc<Error> is tricky!
+                     anyhow::anyhow!("{}", e))
+        } else {
+            self.read_block(block_idx)
+        }
     }
 
     /// Find the block that may contain `key`.
