@@ -23,6 +23,7 @@ pub struct BlockMeta {
     /// Offset of this data block.
     pub offset: usize,
     /// The first key of the data block.
+    /// Question: will there be duplicate keys in blocks or in SST?
     pub first_key: KeyBytes,
     /// The last key of the data block.
     pub last_key: KeyBytes,
@@ -157,8 +158,8 @@ impl SsTable {
         );
         let first_key = block_meta[0].first_key.clone();
         let last_key = block_meta[block_meta.len() - 1].last_key.clone();
-        debug_assert!(first_key.len() > 0);
-        debug_assert!(last_key.len() > 0);
+        debug_assert!(!first_key.is_empty());
+        debug_assert!(!last_key.is_empty());
         let sst = Self {
             file,
             block_meta,
@@ -198,12 +199,11 @@ impl SsTable {
     pub fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
         debug_assert!(block_idx < self.block_meta.len());
         let start_offset = self.block_meta[block_idx].offset as u64;
-        let stop_offset;
-        if block_idx == self.block_meta.len() - 1 {
-            stop_offset = self.block_meta_offset as u64;
+        let stop_offset = if block_idx == self.block_meta.len() - 1 {
+            self.block_meta_offset as u64
         } else {
-            stop_offset = self.block_meta[block_idx + 1].offset as u64;
-        }
+            self.block_meta[block_idx + 1].offset as u64
+        };
         debug_assert!(start_offset < stop_offset);
         let data = self.file.read(start_offset, stop_offset - start_offset)?;
         let block = Block::decode(&data);
@@ -211,14 +211,14 @@ impl SsTable {
     }
 
     /// Read a block from disk, with block cache. (Day 4)
-    pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
+    pub fn read_block_cached(&self, _block_idx: usize) -> Result<Arc<Block>> {
         unimplemented!()
     }
 
     /// Find the block that may contain `key`.
     /// Note: You may want to make use of the `first_key` stored in `BlockMeta`.
     /// You may also assume the key-value pairs stored in each consecutive block are sorted.
-    pub fn find_block_idx(&self, key: KeySlice) -> usize {
+    pub fn find_block_idx(&self, _key: KeySlice) -> usize {
         unimplemented!()
     }
 

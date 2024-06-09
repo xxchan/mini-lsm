@@ -159,7 +159,7 @@ fn test_block_seek_nonexistent() {
     let mut iter = BlockIterator::create_and_seek_to_first(block);
 
     iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(b"key_999"));
-    assert_eq!(iter.is_valid(), false);
+    assert!(!iter.is_valid());
 }
 
 #[test]

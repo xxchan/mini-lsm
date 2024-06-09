@@ -18,6 +18,7 @@ pub struct BlockIterator {
     /// Current index of the key-value pair, should be in range of [0, num_of_elements)
     idx: usize,
     /// The first key in the block (Why do we need this?)
+    #[allow(dead_code)]
     first_key: KeyVec,
 }
 

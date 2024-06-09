@@ -75,7 +75,7 @@ impl Bloom {
         let k = k.min(30).max(1);
         let nbits = (keys.len() * bits_per_key).max(64);
         let nbytes = (nbits + 7) / 8;
-        let nbits = nbytes * 8;
+        let _nbits = nbytes * 8;
         let mut filter = BytesMut::with_capacity(nbytes);
         filter.resize(nbytes, 0);
 
@@ -93,8 +93,8 @@ impl Bloom {
             // potential new encoding for short bloom filters
             true
         } else {
-            let nbits = self.filter.bit_len();
-            let delta = (h >> 17) | (h << 15);
+            let _nbits = self.filter.bit_len();
+            let _delta = (h >> 17) | (h << 15);
 
             // TODO: probe the bloom filter
 
