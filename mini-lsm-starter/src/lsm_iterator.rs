@@ -20,10 +20,8 @@ pub struct LsmIterator {
 impl LsmIterator {
     pub(crate) fn new(iter: LsmIteratorInner) -> Result<Self> {
         let mut it = Self { inner: iter };
-        if it.inner.is_valid() {
-            if it.value().is_empty() {
-                it.go_to_next_nontombstone()?;
-            }
+        if it.inner.is_valid() && it.value().is_empty() {
+            it.go_to_next_nontombstone()?;
         }
         Ok(it)
     }

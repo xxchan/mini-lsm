@@ -1,7 +1,7 @@
 #![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
 
 use std::collections::HashMap;
-use std::ops::Bound;
+use std::ops::{Bound, RangeBounds};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -16,8 +16,6 @@ use crate::compact::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
 use crate::iterators::merge_iterator::MergeIterator;
-use crate::iterators::StorageIterator;
-use crate::key;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::MemTable;
@@ -403,5 +401,13 @@ impl LsmStorageInner {
 
         let merge_iter = MergeIterator::create(iters);
         Ok(FusedIterator::new(LsmIterator::new(merge_iter)?))
+    }
+
+    pub fn scan1(&self, range: impl RangeBounds<[u8]>) -> Result<FusedIterator<LsmIterator>> {
+        self.scan(range.start_bound(), range.end_bound())
+    }
+
+    pub fn scan_full(&self) -> Result<FusedIterator<LsmIterator>> {
+        self.scan1(..)
     }
 }

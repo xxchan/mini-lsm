@@ -19,6 +19,13 @@ use crate::{
     table::{SsTable, SsTableBuilder, SsTableIterator},
 };
 
+pub fn init_logging() {
+    tracing_subscriber::fmt()
+        .pretty()
+        .with_max_level(tracing::Level::TRACE)
+        .init();
+}
+
 #[derive(Clone)]
 pub struct MockIterator {
     pub data: Vec<(Bytes, Bytes)>,
@@ -195,6 +202,7 @@ pub fn generate_sst(
     builder.build(id, block_cache, path.as_ref()).unwrap()
 }
 
+#[allow(dead_code)]
 pub fn generate_sst_with_ts(
     id: usize,
     path: impl AsRef<Path>,

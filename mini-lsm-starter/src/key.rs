@@ -131,6 +131,10 @@ impl<'a> Key<&'a [u8]> {
     pub fn for_testing_from_slice_with_ts(slice: &'a [u8], _ts: u64) -> Self {
         Self(slice)
     }
+
+    pub fn for_testing_debug(&self) -> impl std::fmt::Debug {
+        Bytes::from(self.0.to_vec())
+    }
 }
 
 impl<T: AsRef<[u8]> + Debug> Debug for Key<T> {

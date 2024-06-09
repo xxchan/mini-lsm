@@ -1,4 +1,9 @@
-use crate::key::{KeySlice, KeyVec};
+use bytes::BufMut;
+
+use crate::{
+    block::SIZE_OF_U16,
+    key::{KeySlice, KeyVec},
+};
 
 use super::Block;
 
@@ -25,32 +30,54 @@ impl BlockBuilder {
         }
     }
 
+    fn current_size(&self) -> usize {
+        self.data.len() + self.offsets.len() * SIZE_OF_U16 + SIZE_OF_U16
+    }
+
+    fn current_num_elements(&self) -> usize {
+        self.offsets.len()
+    }
+
     /// Adds a key-value pair to the block. Returns false when the block is full.
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
-        let key_len: u16 = key.len() as u16;
-        let value_len: u16 = value.len() as u16;
-        let entry_len = 2 + key_len + 2 + value_len;
+        debug_assert!(
+            self.current_num_elements() <= u16::MAX as usize,
+            "cannot add more elements"
+        );
 
-        if !self.is_empty() && self.data.len() + entry_len as usize + 2 + 4 > self.block_size {
-            return false;
-        }
+        let key_len = key.len();
+        let value_len = value.len();
+        debug_assert!(
+            key_len <= u16::MAX as usize && key_len > 0 && value_len <= u16::MAX as usize,
+            "abnormal key or value length, key_len: {}, value_len: {}",
+            key_len,
+            value_len
+        );
+
+        let entry_len: usize = SIZE_OF_U16 + key_len + SIZE_OF_U16 + value_len;
 
         if self.is_empty() {
-            self.first_key = key.clone().to_key_vec();
+            // For the first entry, we do not check block size?
+            self.first_key = key.to_key_vec();
+        } else {
+            // Otherwise, we need to check if the block is full.
+            if self.current_size() + entry_len > self.block_size {
+                return false;
+            }
         }
 
         self.offsets.push(self.data.len() as u16);
-        self.data.extend_from_slice(&key_len.to_ne_bytes());
-        self.data.extend_from_slice(key.into_inner());
-        self.data.extend_from_slice(&value_len.to_ne_bytes());
-        self.data.extend_from_slice(value);
+        self.data.put_u16_le(key_len as u16);
+        self.data.put(key.raw_ref());
+        self.data.put_u16_le(value_len as u16);
+        self.data.put(value);
 
         true
     }
 
     /// Check if there is no key-value pair in the block.
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.first_key.is_empty()
     }
 

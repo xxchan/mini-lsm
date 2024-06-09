@@ -52,6 +52,7 @@ pub struct MergeIterator<I: StorageIterator> {
 }
 
 impl<I: StorageIterator> MergeIterator<I> {
+    /// Why using `Box<I>` here? Because `I` maybe very large and we will move it around in the heap.
     pub fn create(iters: Vec<Box<I>>) -> Self {
         let mut iters: BinaryHeap<HeapWrapper<I>> = iters
             .into_iter()
