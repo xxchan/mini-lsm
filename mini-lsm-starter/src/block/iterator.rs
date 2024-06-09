@@ -71,11 +71,12 @@ impl BlockIterator {
 
     #[must_use]
     pub fn print_current_entry(&self) -> String {
+        let value = &self.block.data[self.value_range.0..self.value_range.1];
         format!(
             "idx: {}, key: {:?}, value: {:?}",
             self.idx,
-            self.key().for_testing_debug(),
-            Bytes::copy_from_slice(self.value())
+            self.key.as_key_slice().for_testing_debug(),
+            Bytes::copy_from_slice(value)
         )
     }
 
@@ -93,7 +94,6 @@ impl BlockIterator {
 
     /// Returns true if the iterator is valid.
     pub fn is_valid(&self) -> bool {
-        self.debug_assert_iterator_valid();
         !self.key.is_empty()
     }
 
@@ -120,12 +120,15 @@ impl BlockIterator {
     /// Seek to the first key that >= `key`.
     /// Note: You should assume the key-value pairs in the block are sorted ASC when being added by
     /// callers.
+    ///
+    /// If `key` does not exist, seek to idx `num_elements` (makes the iterator invalid).
     #[tracing::instrument(level = "trace", skip_all, fields(key = ?key.for_testing_debug()))]
     pub fn seek_to_key(&mut self, key: KeySlice) {
         let mut low = 0;
         let mut high = self.block.offsets.len();
         while low < high {
             let mid = low + (high - low) / 2;
+            debug_assert!(mid < self.block.num_elements());
             self.seek_to_idx(mid);
             self.debug_assert_iterator_valid();
             if self.key.as_key_slice() < key {
@@ -141,8 +144,7 @@ impl BlockIterator {
     fn seek_to_idx(&mut self, idx: usize) {
         // debug_assert!(idx >= self.idx, "should not seek back, idx: {}, self.idx: {}", idx, self.idx);
         if idx >= self.block.num_elements() {
-            self.key = KeyVec::new();
-            self.idx = self.block.num_elements();
+            self.set_invalid();
             return;
         }
         let offset = self.block.offsets[idx] as usize;
@@ -164,5 +166,10 @@ impl BlockIterator {
         let value_len = entry.get_u16_le() as usize;
         let value_begin = offset + SIZE_OF_U16 + key_len + SIZE_OF_U16;
         self.value_range = (value_begin, value_begin + value_len);
+    }
+
+    fn set_invalid(&mut self) {
+        self.key = KeyVec::new();
+        self.idx = self.block.num_elements();
     }
 }

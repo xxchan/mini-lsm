@@ -29,8 +29,14 @@ use crate::key::KeyVec;
 /// - Key length and value length are both 2 bytes, which means their maximum lengths are 65535.
 /// - `offset` is 2 bytes (max pointing to 64KB).
 /// - `num_of_elements` is 2 bytes, which means the maximum number of elements in a block is 65535.
-
 pub struct Block {
+    /// Q: Can we change `data` to `Bytes`?, and `offsets` to `Arc<[u16]>`?
+    /// And change all the iterator interfaces to return Byte instead of &[u8]?
+    /// What are the pros/cons?
+    ///
+    /// I think `Arc<Block>` is enough. No need to introduce smart pointer here.
+    /// 
+    /// Q: Can a block contain duplicated keys?
     pub(crate) data: Vec<u8>,
     pub(crate) offsets: Vec<u16>,
 }
@@ -57,6 +63,11 @@ impl Block {
     }
 
     /// Decode from the data layout, transform the input `data` to a single `Block`
+    ///
+    /// Is your implementation prune to a maliciously-built block? 
+    /// Will there be invalid memory access, or OOMs, if a user deliberately construct an invalid block?
+    /// 
+    /// Currently it will panic, but not invalid access.
     pub fn decode(data: &[u8]) -> Self {
         let offset_end = data.len() - SIZE_OF_U16;
 

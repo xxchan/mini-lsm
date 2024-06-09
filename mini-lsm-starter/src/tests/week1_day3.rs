@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::{
     block::{Block, BlockBuilder, BlockIterator},
-    key::{KeySlice, KeyVec},
+    key::{KeySlice, KeyVec}, tests::harness::init_logging,
 };
 
 #[test]
@@ -152,3 +152,19 @@ fn test_block_seek_key() {
         iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(b"k"));
     }
 }
+
+#[test]
+fn test_block_seek_nonexistent() {
+    let block = Arc::new(generate_block());
+    let mut iter = BlockIterator::create_and_seek_to_first(block);
+
+    iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(b"key_999"));
+    assert_eq!(iter.is_valid(), false);
+}
+
+#[test]
+#[should_panic]
+fn test_malicious_block() {
+    Block::decode(&[]);
+}
+
